@@ -26,4 +26,9 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="7.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="../LICENSE" Pack="true" Visible="false" PackagePath="" />
+    <None Include="../icon.png" Pack="true" Visible="false" PackagePath="" />
+    <None Include="../README.md" Pack="true" Visible="false" PackagePath="" />
+    </ItemGroup>
 </Project>
