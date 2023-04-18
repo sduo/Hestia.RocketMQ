@@ -2,41 +2,51 @@
 using Aliyun.MQ.Model;
 using Aliyun.MQ.Model.Exp;
 using Hestia.MQ.Abstractions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using RocketMessage = Aliyun.MQ.Model.Message;
 using HestiaMessage = Hestia.MQ.Abstractions.Message;
+using RocketMessage = Aliyun.MQ.Model.Message;
 
 namespace Hestia.RocketMQ
 {
     public class Consumer : IConsumer
     {
-        public const uint DefaultBatch = 1u;
-        public const uint DefaultTimeout = 5u;
-        public const string DefaultGroupId = "GID";
+        public string Name { get; private set; }
 
-        public readonly MQConsumer consumer;
-        public readonly MQProducer producer;
-
-        private readonly string format = null;
-        private readonly string charset = null;
-        private readonly string gid = null;
-
+        private readonly ILogger<Producer> logger;
+        private readonly IConfiguration configuration;
+        private readonly MQConsumer consumer;
+        private readonly MQProducer producer;
         private readonly uint batch;
         private readonly uint timeout;
 
-        public Consumer(MQProducer producer, MQConsumer consumer,string format,string charset,uint? batch,uint? timeout,string gid)
+        private readonly string formatPrefix;
+        private readonly string charsetPrefix;
+
+        private readonly string idempotent;
+
+        public Consumer(string name,string mq,IServiceProvider services ,Func<IConfiguration,MQConsumer> consumerFactory, Func<IConfiguration,MQProducer> producerFactory)
         {
-            this.producer = producer;
-            this.consumer = consumer;
-            this.format = format ?? Utility.DefaultFormatPrefix;
-            this.charset = charset ?? Utility.DefaultCharsetPrefix;
-            this.batch = batch ?? DefaultBatch;
-            this.timeout = timeout ?? DefaultTimeout;
-            this.gid = gid ?? DefaultGroupId;
+            Name = name;
+            logger = services.GetService<ILogger<Producer>>();
+            configuration = services.GetRequiredService<IConfiguration>().GetSection($"{mq}:Consumer:{name}");
+            consumer = consumerFactory.Invoke(configuration);
+            producer = producerFactory.Invoke(configuration);
+
+            batch = configuration.GetValue("Batch", 1u);
+            timeout = configuration.GetValue("Timeout", 5u);
+
+            formatPrefix = configuration.GetValue("FormatPrefix", Utility.DefaultFormatPrefix);
+            charsetPrefix = configuration.GetValue("CharsetPrefix", Utility.DefaultCharsetPrefix);
+
+            idempotent = configuration.GetValue<string>("Idempotent", null);
         }
+        
 
         [Obsolete("Consume(Func<HestiaMessage, long> callback)")]
         public void Consume(Action<HestiaMessage> callback)
@@ -101,7 +111,7 @@ namespace Hestia.RocketMQ
 
             foreach (var current in available)
             {
-                var target = current.GetProperty(gid, null);
+                var target = current.GetProperty(idempotent, null);
                 if(!string.IsNullOrEmpty(target) && !string.Equals("*",target) && !string.Equals(consumer.Consumer,target))
                 {
                     Trace.WriteLine($"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}:{Environment.CurrentManagedThreadId}]<Drop>{consumer.IntanceId}/{consumer.TopicName}/{consumer.Consumer}/{consumer.MessageTag}/{current.Id}({current.MessageTag}:{target})");
@@ -112,6 +122,11 @@ namespace Hestia.RocketMQ
                 if (result > 0)
                 {
                     var request = BuildRetryMessage(current, result);
+                    if (!string.IsNullOrEmpty(idempotent))
+                    {
+                        request.Properties.Add(idempotent, consumer.Consumer);
+                    }
+
                     var response = producer.PublishMessage(request);
                     Trace.WriteLine($"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff}:{Environment.CurrentManagedThreadId}]<RePublish>{consumer.IntanceId}/{consumer.TopicName}/{consumer.Consumer}/{consumer.MessageTag}/{current.Id}=>{producer.IntanceId}/{producer.TopicName}/{response.Id}({current.MessageTag})");
                 }
@@ -133,7 +148,7 @@ namespace Hestia.RocketMQ
             {
                 target.ShardingKey = source.ShardingKey;
             }
-
+            
             foreach (var injector in Utility.RetryMessagePropertyInjector)
             {
                 if (string.IsNullOrEmpty(injector.Key)) { continue; }
@@ -147,7 +162,7 @@ namespace Hestia.RocketMQ
                 if (string.IsNullOrEmpty(property.Key) || string.IsNullOrEmpty(property.Value)) { continue; }
                 if (Utility.RetryMessagePropertyInjector.ContainsKey(property.Key)) { continue; }
 
-                if (property.Key.StartsWith(format) || property.Key.StartsWith(charset)) { target.Properties.Add(property.Key, property.Value); }
+                if (property.Key.StartsWith(formatPrefix) || property.Key.StartsWith(charsetPrefix)) { target.Properties.Add(property.Key, property.Value); }
 
                 var value = Utility.RetryMessagePropertyMapper.ContainsKey(property.Key) ? Utility.RetryMessagePropertyMapper[property.Key].Invoke(property.Value) : property.Value;
                 if (string.IsNullOrEmpty(value)) { continue; }
@@ -165,7 +180,13 @@ namespace Hestia.RocketMQ
             var target = new HestiaMessage
             {
                 Id = source.Id,
-                Body = Utility.Transform(source.Body, nameof(RocketMessage.Body),format,charset, source.Properties, Utility.Decode),
+                Body = Utility.Transform(source.Body, () => {
+                    var key = string.Concat(formatPrefix, nameof(RocketMessage.Body));
+                    return Utility.GetFromDictionary(source.Properties, key, configuration.GetValue<string>(key, null));
+                }, () => {
+                    var key = string.Concat(charsetPrefix, nameof(RocketMessage.Body));
+                    return Utility.GetFromDictionary(source.Properties, key, configuration.GetValue<string>(key, null));
+                }, Utility.Decode),
                 Tag = source.MessageTag,
                 Key = source.MessageKey
             };
@@ -196,9 +217,15 @@ namespace Hestia.RocketMQ
                 if (Utility.ConsumeMessageSdkPropertyInjector.ContainsKey(property.Key)) { continue; }
                 if (Utility.ConsumeMessagePropertyInjector.ContainsKey(property.Key)) { continue; }
 
-                if (property.Key.StartsWith(format) || property.Key.StartsWith(charset)) { target.Properties.Add(property.Key, property.Value); }
+                if (property.Key.StartsWith(formatPrefix) || property.Key.StartsWith(charsetPrefix)) { target.Properties.Add(property.Key, property.Value); }
 
-                var value = Utility.ConsumeMessagePropertyMapper.ContainsKey(property.Key) ? Utility.ConsumeMessagePropertyMapper[property.Key].Invoke(property.Value) : Utility.Transform(property.Value, property.Key,format,charset, source.Properties, Utility.Decode);
+                var value = Utility.ConsumeMessagePropertyMapper.ContainsKey(property.Key) ? Utility.ConsumeMessagePropertyMapper[property.Key].Invoke(property.Value) : Utility.Transform(property.Value, () => {
+                    var key = string.Concat(formatPrefix, property.Key);
+                    return Utility.GetFromDictionary(source.Properties, key, configuration.GetValue<string>(key, null));
+                }, () => {
+                    var key = string.Concat(charsetPrefix, property.Key);
+                    return Utility.GetFromDictionary(source.Properties, key, configuration.GetValue<string>(key, null));
+                }, Utility.Decode);
                 if (string.IsNullOrEmpty(value)) { continue; }
 
                 target.Properties.Add(property.Key, value);

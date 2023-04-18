@@ -12,20 +12,20 @@ namespace Hestia.RocketMQ
     {
         internal const string DefaultFormatPrefix = "Format:";
         internal const string DefaultCharsetPrefix = "Charset:";
+        internal const string DefaultFormat = "h16";
 
-        private static readonly string[] FormatRaw = new string[] { "raw", "none" };
-        private static readonly string[] FormatBase64 = new string[] { "b64", "base64" };
-        private static readonly string[] FormatHex = new string[] { "h16", "hex" };
+        private static readonly string[] formatRaw = new string[] { "raw", "none" };
+        private static readonly string[] formatBase64 = new string[] { "b64", "base64" };
+        private static readonly string[] formatHex = new string[] { "h16", "hex" };
+        private static readonly string supportedFormats = string.Join(';' ,$"RAW:{string.Join(',', formatRaw)}", $"Base64:{string.Join(',', formatBase64)}", $"Hex:{string.Join(',', formatHex)}");
 
-        private static readonly string SupportedFormats = string.Join(';' ,$"RAW:{string.Join(',', FormatRaw)}", $"Base64:{string.Join(',', FormatBase64)}", $"Hex:{string.Join(',', FormatHex)}");
-        private const string DefaultFormat = "h16";
+        private static readonly long maxDeliverOffset = 259200L; // 72*3600
 
-        private static readonly long MaxDeliverOffset = 259200L; // 72*3600
+        private const string propertyOrginId = "_OrginId";
+        private const string propertyChainId = "_ChainId";
+        private const string propertyOrginPublishTime = "_OrginPublishTime";
+        private const string propertyTotalConsumedTimes = "_TotalConsumedTimes";
 
-        private const string PropertyOrginId = "_OrginId";
-        private const string PropertyChainId = "_ChainId";
-        private const string PropertyOrginPublishTime = "_OrginPublishTime";
-        private const string PropertyTotalConsumedTimes = "_TotalConsumedTimes";
 
         internal static readonly Dictionary<string, Func<string, string>> PublishMessagePropertyMapper = new() {
             { "KEYS",x=>null },
@@ -48,10 +48,10 @@ namespace Hestia.RocketMQ
         };
 
         internal static readonly Dictionary<string, Func<Message, string>> RetryMessagePropertyInjector = new() {
-            { PropertyOrginId,x=>x.GetProperty(PropertyOrginId,x.Id) },
-            { PropertyChainId,x=>x.Id },
-            { PropertyOrginPublishTime,x=> x.GetProperty(PropertyOrginPublishTime,$"{x.PublishTime}") },
-            { PropertyTotalConsumedTimes,x=> $"{(x.GetProperty(PropertyTotalConsumedTimes)?.ToUnsignedInt() ?? x.ConsumedTimes)+1u}" }
+            { propertyOrginId,x=>x.GetProperty(propertyOrginId,x.Id) },
+            { propertyChainId,x=>x.Id },
+            { propertyOrginPublishTime,x=> x.GetProperty(propertyOrginPublishTime,$"{x.PublishTime}") },
+            { propertyTotalConsumedTimes,x=> $"{(x.GetProperty(propertyTotalConsumedTimes)?.ToUnsignedInt() ?? x.ConsumedTimes)+1u}" }
         };
 
         internal static readonly Dictionary<string, Func<Message, string>> ConsumeMessageSdkPropertyInjector = new()
@@ -64,10 +64,10 @@ namespace Hestia.RocketMQ
             {$"__{nameof(Message.PublishTime)}",x=>GetDateTimeString(x.PublishTime)}
         };
         internal static readonly Dictionary<string, Func<Message, string>> ConsumeMessagePropertyInjector = new() {
-            { PropertyOrginId,x=>x.GetProperty(PropertyOrginId,x.Id) },
-            { PropertyChainId,x=>x.GetProperty(PropertyChainId,x.Id) },
-            { PropertyOrginPublishTime,x=> GetDateTimeString(x.GetProperty(PropertyOrginPublishTime,null)?.ToLong() ?? x.PublishTime) },
-            { PropertyTotalConsumedTimes,x=> x.GetProperty(PropertyTotalConsumedTimes,$"{x.ConsumedTimes}") }
+            { propertyOrginId,x=>x.GetProperty(propertyOrginId,x.Id) },
+            { propertyChainId,x=>x.GetProperty(propertyChainId,x.Id) },
+            { propertyOrginPublishTime,x=> GetDateTimeString(x.GetProperty(propertyOrginPublishTime,null)?.ToLong() ?? x.PublishTime) },
+            { propertyTotalConsumedTimes,x=> x.GetProperty(propertyTotalConsumedTimes,$"{x.ConsumedTimes}") }
         };
 
 
@@ -79,44 +79,44 @@ namespace Hestia.RocketMQ
 
         internal static void VerifyDelayInRange(long delay)
         {
-            if (delay <= 0 || delay > MaxDeliverOffset) 
+            if (delay <= 0 || delay > maxDeliverOffset) 
             { 
-                throw new ArgumentOutOfRangeException(nameof(delay), $"{nameof(delay)}: (0,{MaxDeliverOffset}]"); 
+                throw new ArgumentOutOfRangeException(nameof(delay), $"{nameof(delay)}: (0,{maxDeliverOffset}]"); 
             }
         }        
 
         private static Func<byte[], string> GetEncoder(string name)
         {
-            if (FormatRaw.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatRaw.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return null;
             }
-            if (FormatBase64.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatBase64.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return Convert.ToBase64String;
             }
-            if (FormatHex.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatHex.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return Convert.ToHexString;
             }
-            throw new ArgumentException(SupportedFormats, nameof(name));
+            throw new ArgumentException(supportedFormats, nameof(name));
         }
 
         private static Func<string, byte[]> GetDecoder(string name)
         {
-            if (FormatRaw.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatRaw.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return null;
             }
-            if (FormatBase64.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatBase64.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return Convert.FromBase64String;
             }
-            if (FormatHex.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
+            if (formatHex.Any(x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase)))
             {
                 return Convert.FromHexString;
             }
-            throw new ArgumentException(SupportedFormats, nameof(name));
+            throw new ArgumentException(supportedFormats, nameof(name));
         }
 
         private static bool EncodingFilter(EncodingInfo encoding, string name)
@@ -140,17 +140,15 @@ namespace Hestia.RocketMQ
             return source[key]; 
         }
 
-        internal static string Transform(string source, string name,string format,string charset, IDictionary<string, string> properties, Func<string, string, string, string> codec)
+        internal static string Transform(string source, Func<string> format,Func<string> charset, Func<string, string, string, string> codec)
         {
-            if (source is null) { return null; }
-            var fmt = GetFromDictionary(properties, string.Concat(format, name), null) ?? DefaultFormat;
-            var ec = GetFromDictionary(properties, string.Concat(charset, name), null);
-            return codec(source, fmt, ec);
+            if (source is null) { return null; }            
+            return codec(source, format.Invoke(), charset.Invoke());
         }
 
         internal static string Encode(string source, string encoder, string encoding = null)
         {
-            return Encode(source, encoder, GetEncoding(encoding) ?? Encoding.UTF8);
+            return Encode(source, encoder ?? DefaultFormat, GetEncoding(encoding) ?? Encoding.UTF8);
         }
 
         internal static string Encode(string source, string encoder, Encoding encoding)
@@ -160,7 +158,7 @@ namespace Hestia.RocketMQ
 
         internal static string Decode(string source, string decoder, string encoding = null)
         {
-            return Decode(source, decoder, GetEncoding(encoding) ?? Encoding.UTF8);
+            return Decode(source, decoder ?? DefaultFormat, GetEncoding(encoding) ?? Encoding.UTF8);
         }
 
         internal static string Decode(string source, string decoder, Encoding encoding)

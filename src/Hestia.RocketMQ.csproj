@@ -5,7 +5,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
 	  <PackageId>Hestia.RocketMQ</PackageId>
-	  <Version>1.0.0</Version>
+	  <Version>1.0.1</Version>
 	  <Authors>SDuo</Authors>
 	  <PackageDescription></PackageDescription>
 	  <RepositoryUrl>https://github.com/sduo/Hestia.RocketMQ</RepositoryUrl>
@@ -18,7 +18,7 @@
 
   <ItemGroup>
     <PackageReference Include="Hestia.Core" Version="1.0.4" />
-    <PackageReference Include="Hestia.MQ.Abstractions" Version="1.0.7" />
+    <PackageReference Include="Hestia.MQ.Abstractions" Version="1.0.8" />
     <PackageReference Include="Hestia.RocketMQ.SDK4.HTTP" Version="1.0.5.1" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="7.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="7.0.4" />
